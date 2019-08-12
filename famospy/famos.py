@@ -1,5 +1,6 @@
 import os
 
+#####################################################################################################
 def set_crit_parms(criticalParameters, allNames):
   
   """ Convert Critical and Swap Sets.
@@ -26,6 +27,551 @@ def set_crit_parms(criticalParameters, allNames):
   
   return out
 
+#####################################################################################################
+def random_init_model(numberPar, critParms = None, doNotFit = None):
+  
+  """ Create a random starting model.
+  
+      Parameters:
+          numberPar (int):The total number of parameters available.
+          critParms (list):A list containing lists which specify the critical parameter sets. Needs to be given by index and not by parameter name.
+          doNotFit (set): A set containing the indices of the parameters that are not supposed to be fitted.
+      
+      Returns:
+          (set): A set containing the parameter indices of the random starting model.   
+    
+    """
+  
+  import random
+  
+  initMod = set()
+  
+  if critParms is not None:
+    for i in range(len(critParms)):
+      if len(critParms[i]) > 1:
+        initMod = initMod | set([random.choice(critParms[i])])
+      else:
+        initMod = initMod | set(critParms[i])
+        
+  if (len(initMod) == 0) and (doNotFit is None):
+    initMod = set(random.sample(range(numberPar), random.choice(range(numberPar)) + 1))
+  else:
+    badVals = initMod.copy()
+    if doNotFit is not None:
+      badVals = initMod | doNotFit
+    vals = [x for x in range(numberPar) if x not in badVals]
+    initMod = initMod | set(random.sample(vals, random.choice(range(len(vals))) + 1))
+  
+  return list(initMod)
+  
+
+
+#####################################################################################################
+def model_appr(currentParms, criticalParms, doNotFit = None):
+  
+  """ Tests if a model is violating specified critical conditions.
+
+    Parameters:
+        currentParms (list):A list containing the indices of the current model.
+        criticalParameters (list):A list containing lists which specify the critical parameter sets. Needs to be given by index and not by parameter name
+        doNotFit (list):A list containing the indices of the parameters that are not to be fitted.
+
+    Returns:
+        (bool): True, if the model is appropriate, False, if it violates the specified critical conditions.  
+
+    """
+  
+  if doNotFit is not None and any(x in currentParms for x in doNotFit):
+      return False
+    
+  if len(criticalParms) == 0:
+    return True
+  
+  for i in range(len(criticalParms)):
+    testSet = set(criticalParms[i])
+    currentSet = set(currentParms)
+    if len(testSet & currentSet) == 0:
+      return False
+  
+  return True
+
+
+
+#####################################################################################################
+def famos_directories(homedir):
+  """ Creates the directories in which the results are going to be saved
+  
+   Parameters:
+        homedir (string): The directory in which the result folders will be created
+
+   Returns:
+     Creates main directory 'FAMoS-Results', with subdirectories 'BestModel' (contains information about the best model of each run), 'Figures' (contains performance plots), 'Fits' (contains the information of all tested models) and 'TestedModels' (contains the information which models were already tested).
+        
+  
+    """
+  import os
+  from pathlib import Path
+  
+  direc = Path(homedir) / "FAMoS-Results"
+  if direc.exists() is not True:
+    os.mkdir(direc)
+    
+  if os.path.exists(Path(direc) / "BestModel") is not True:
+    os.mkdir(Path(direc) / "BestModel")
+    
+  if os.path.exists(Path(direc) / "Figures") is not True:
+    os.mkdir(Path(direc) / "Figures")
+    
+  if os.path.exists(Path(direc) / "Fits") is not True:
+    os.mkdir(Path(direc) / "Fits")
+    
+  if os.path.exists(Path(direc) / "TestedModels") is not True:
+    os.mkdir(Path(direc) / "TestedModels")
+
+
+
+
+#####################################################################################################
+def combine_par(fitPar, allNames, defaultVal = None):
+  
+  """ Combine fitted and non-fitted parameters.
+
+    Parameters:
+        fitPar (dict):A dictionary containing all parameters with respective names that are supposed to be fitted
+        allNames (list):A list containing the names of all parameters (fitted and non-fitted).
+        defaultVal (dict):A dictionary containing the values that the non-fitted parameters should take. If NoneType, all non-fitted parameters will be set to zero. Default values can be either given by a numeric value or by the name of the corresponding parameter the value should be inherited from (NOTE: If a string is supplied, the corresponding parameter entry has to contain a numeric value). Default to None.
+
+    Returns:
+        (list): A dictionary containing the elements of fitPar and the non-fitted parameters, in the order given by allNames. The non-fitted parameters are determined by the remaining names in allNames and their values are set according to defaultVal.   
+
+    """
+  
+  if not set(list(fitPar.keys())).issubset(allNames):
+    raise ValueError('The names of fitPar have to be included in allNames!')
+  
+  if defaultVal is not None and type(defaultVal) is not dict:
+    raise ValueError('defaultVal has to be either None or a dictionary')
+    
+  allPar = dict(zip(allNames,[0]*len(allNames)))
+  for x in fitPar.keys():
+    allPar[x] = fitPar[x]
+    
+  if defaultVal is None:
+    return allPar
+  else:
+    for x in set(allNames).difference(set(list(fitPar.keys()))):
+      if isinstance(defaultVal[x], str):
+        if defaultVal[x] in fitPar.keys():
+          allPar[x] = fitPar[defaultVal[x]]
+        else:
+          allPar[x] = defaultVal[defaultVal[x]]
+      else:
+        allPar[x] = defaultVal[x]
+  return(allPar)
+  
+
+
+
+#####################################################################################################
+def combine_and_fit(par, fitNames, parNames, fitFn, binary = None, defaultVal = None, adds = None):
+  
+  """ Supply combined parameters to fitting function.
+
+    Parameters:
+        par (list):A list containing the values of all parameters that are supposed to be fitted.
+        fitNames (list): A list containing the names of all parameters that are supposed to be fitted. Needs to be in the same order as 'par'.
+        parNames (list):A list containing the names of all parameters.
+        fitFn (function):The cost or optimisation function.
+        binary (list):A list containing zeroes and ones. Zero indicates that the corresponding parameter is not fitted. 
+        defaultVal (dict):A dictionary containing the values that the non-fitted parameters should take. If NoneType, all non-fitted parameters will be set to zero. Default values can be either given by a numeric value or by the name of the corresponding parameter the value should be inherited from (NOTE: If a string is supplied, the corresponding parameter entry has to contain a numeric value). Default to None.
+        adds (dict). A dictionary containing all necessary inputs for the cost function.
+
+    Returns:
+        (float): The corresponding value coming from the cost or optimisation function fitFn.   
+
+    """
+  
+  import inspect
+  #from famospy import combine_par
+  
+  dictpar = dict(zip(fitNames,par))
+
+  totalPar = combine_par(fitPar = dictpar, allNames = parNames, defaultVal = defaultVal)
+  funcVars = dict(parms = totalPar)
+  neededVars = inspect.getfullargspec(fitFn)[0]
+  neededVars.remove("parms")
+  if "binary" in neededVars:
+    funcVars["binary"] = binary
+    neededVars.remove("binary")
+  if len(neededVars) > 0:
+    for i in neededVars:
+      funcVars[i] = adds.get(i)
+
+  diff = fitFn(**funcVars)
+  return(diff)
+
+
+
+
+#####################################################################################################
+def get_model(model, homedir = os.getcwd(), allNames = None):
+  """ Get the information about a fitted model.
+
+    Parameters:
+        model (str or list):Either the binary number of the model as a string (e.g. "011001"), a named vector containing the names the names of the fitted parameters or a vector containing ones and zeroes to indicate which model parameter were fitted. If the names of the fitted parameters are supplied, 'allNames' must be specified as well.
+        homedir A string giving the directory in which the result folders are found.
+        allNames (list):A list containing the names of all parameters (fitted and non-fitted).
+
+    Returns:
+        (list): A dictionary containing the selection criterion value of the fitted model as well as corresponding parameter values
+
+    """
+  from pathlib import Path
+  from ast import literal_eval
+  if isinstance(model, (str, list)) == False:
+    raise TypeError("Supply a correct model definition.")
+  if isinstance(model, str) == True:
+    binary = model
+  elif isinstance(model[0], str) == True:
+    if allNames is None:
+      raise TypeError("Please supply a list containing all parameter names.")
+    modelBinary = [1 if i in model else 0 for i in allNames]
+    binary = "".join(map(str, modelBinary))
+  else:
+    binary = "".join(map(str, model))
+  
+  modelFile = Path(homedir) / "FAMoS-Results" / "Fits" / ("Model" + binary + ".txt")
+  if modelFile.exists() == False:
+    raise ValueError("The specified file '" + str(modelFile) + "' does not exist.")
+  else:
+    with open(modelFile, "r") as f:
+      res = literal_eval(f.read())
+  
+  return(res)
+
+
+
+#####################################################################################################
+def get_results(homedir, mrun):
+  
+  """ Return the results of the best model.
+  
+      Parameters:
+          homedir (str):The working directory containing the famos files.
+          critParms (list):A list containing lists which specify the critical parameter sets. Needs to be given by index and not by parameter name.
+          mrun (str): The number of the famos run that is to be evaluated. Must be a three digit string in the form of '001'. Alternatively, supplying 'best' will return the best result that is found over all FAMoS runs.
+      
+      Returns:
+          (dict): A dictionary containing the following elements:
+            SCV:The value of the selection criterion of the best model.
+            modelPar: The parameters of the best model.
+            par:The values of the parameters corresponding to the best model.}
+            binary:The binary information of the best model.
+            binaryDict: The binary information in dict form.
+            totalModelsTested: The total number of different models that were analysed in this run. May include repeats.
+            mrun: The number of the current famos run.
+            initialModel:The first model evaluated by the famos run.
+    """
+  import numpy
+  import os
+  from pathlib import Path
+  from ast import literal_eval
+  mrunOld = mrun
+  if mrun == "best":
+    bestSCV = numpy.math.inf
+    oldFiles = []
+    for r,d,f in os.walk(Path(homedir) / "FAMoS-Results" / "BestModel"):
+      for file in f:
+        oldFiles.append(file)
+    
+    for i in range(len(oldFiles)):
+      with open(Path(homedir) / "FAMoS-Results" / "BestModel" / oldFiles[i], "r") as f:
+        bm = literal_eval(f.read())
+      
+      if bm["SCV"] < bestSCV:
+        bestSCV = bm["SCV"]
+        
+        mrun = oldFiles[i].replace(str("BestModel"), "")
+        mrun = mrun.replace(".txt", "")
+
+  with open(Path(homedir) / "FAMoS-Results" / "BestModel" / ("BestModel" + mrun + ".txt"), "r") as f:
+    res = literal_eval(f.read())
+  
+  if mrunOld == "best":
+    print("Best selection criterion value over all runs: " + str(round(res["SCV"], 2)))
+    numberTested = 0
+    testedFiles = []
+    for r,d,f in os.walk(Path(homedir) / "FAMoS-Results" / "TestedModels"):
+      for file in f:
+        testedFiles.append(file)
+    for i in range(len(testedFiles)):
+      with open(Path(homedir) / "FAMoS-Results" / "TestedModels" / testedFiles[i], "r") as f:
+        nt = literal_eval(f.read())
+      numberTested += len(nt)
+    print("Total number of tested models over all runs (might include repeats): " + str(numberTested))
+  else:
+    print("Best selection criterion value of run " + mrun + ": " + str(round(res["SCV"],2)))
+    with open(Path(homedir) / "FAMoS-Results" / "TestedModels" / ("TestedModels" + mrun + ".txt"), "r") as f:
+      numberTested = len(literal_eval(f.read()))
+    print("Number of models tested during this run (might include repeats): " + str(numberTested))
+  
+  bestPar = res["bestPar"].copy()
+  binary = res["binary"]
+  #import pdb; pdb.set_trace()
+  for i in reversed(range(len(binary))):
+    if binary[i] == 0:
+      bestPar.pop(list(bestPar.keys())[i])
+      
+  with open(Path(homedir) / "FAMoS-Results" / "TestedModels" / ("TestedModels" + mrun + ".txt"), "r") as f:
+    initModel = literal_eval(f.read())[0]
+  
+  print("The parameters of the best model are: " + str(list(bestPar.keys())))
+  print("Estimated parameter values: " + str(res["bestPar"]))
+  print("Best model binary is: " + "".join(map(str, res["binary"])))
+  output = dict(SCV = round(res["SCV"],2),
+                modelPar = list(bestPar.keys()),
+                par = res["bestPar"],
+                binary = "".join(map(str, res["binary"])),
+                binaryList = res["binary"],
+                totalModelsTested = numberTested,
+                mrun = mrun,
+                initialModel = initModel[2:])
+  return(output)
+
+
+
+#####################################################################################################
+def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, defaultVal = None, randomBorders = 1, conTol = 0.01, controlOptim = dict(maxiter = 1000), verbose = False, **kwargs):
+  
+  """ Underlying optimisation routine of famospy.
+
+    Parameters:
+        binary (list):A list containing zeroes and ones. Zero indicates that the corresponding parameter is not fitted.
+        parms (dict):A dictionary containing the starting values of the optimisation procedure. Must be in the same order as 'binary'.
+        fitFn (function):A cost or optimsation function. Has to take the complete parameter vector as an input argument (needs to be named 'parms') and must return must return a selection criterion value (e.g. AICc or BIC). The binary list containing the information which parameters are fitted, can also be used by taking 'binary' as an additional function input argument.
+        homedir (string):A string giving the directory in which the result folders generated by famos are found.
+        useOptim (bool):If True, the cost function 'fitFn' will be fitted via the minimize function from scipy.optimize. If False, the cost function will only be evaluated, meaning that users can specify their own optimisation routine inside the cost function.
+        optimRuns (int):The number of times that each model will be optimised. Default to 1. Numbers larger than 1 use random initial conditions (see 'random.borders').
+        defaultVal (dict):A dictionary containing the values that the non-fitted parameters should take. If None, all non-fitted parameters will be set to zero. Default values can be either given by a numeric value or by the name of the corresponding parameter the value should be inherited from (NOTE: In this case the corresponding parameter entry has to contain a numeric value). Default to None.
+        randomBorders (list or function):The ranges from which the random initial parameter conditions for all optimRuns > 1 are sampled. Can be either given as a list containing the relative deviations for all parameters or as a list containing lists in which the first entry describes the lower and in the second entry describes the upper border values. Parameters are uniformly sampled based on INCLUDE PYTHON FUNCTION. Default to 1 (100% deviation of all parameters). Alternatively, functions such as INCLUDE PYTHON FUNCTION, INCLUDE PYTHON FUNCTION, etc. can be used if the additional arguments are passed along as well.
+        conTol (float):The relative convergence tolerance. If useOptim is True, famos will rerun the optimisation routin until the relative improvement between the current and the last fit is less than conTol. Default is set to 0.01, meaning the fitting will terminate if the improvement is less than 1% of the previous value.
+        controlOptim (dict):Control parameters passed along to scipy's minimize function. For more details, see the corresponding documentation.
+        verbose (bool):If True, FAMoS will output all details about the current fitting procedure.
+        
+
+    Returns:
+        (file): Saves the results obtained from fitting the corresponding model parameters in the respective files, from which they can be accessed by the main function famos.   
+
+    """
+  import numpy
+  from scipy.optimize import minimize
+  #from famospy import combine_par, combine_and_fit
+  from ast import literal_eval
+  import os
+  from pathlib import Path
+  #get the indices of the fitted and the not-fitted parameter
+  noFitIndex = [i for i in range(len(binary)) if binary[i] == 0]
+  fitIndex = [i for i in range(len(binary)) if binary[i] == 1]
+  fitDict = parms.copy()
+  #remove non-fitted parameters
+  getAllNames = list(parms.keys())
+  for i in noFitIndex:
+    fitDict.pop(getAllNames[i]) 
+
+  #number of successful runs
+  k = 1
+  #number of failed runs
+  totalTries = 0
+  
+  #try k = optimRuns different combinations
+  while k <= optimRuns and totalTries < (4*optimRuns):
+    #set failing status to False
+    abort = False
+    #print number of successful runs
+    if verbose:
+      print("Fitting run # " + str(k))
+    
+    #check if the initial parameter set is working
+    if k == 1:
+      #take the parameter combination from the currently best model
+      ranPar = fitDict.values()
+      #check if the function works
+      if useOptim == True:
+        finiteVal = combine_and_fit(par = ranPar,
+                                    fitNames = list(fitDict.keys()),
+                                    parNames = getAllNames,
+                                    fitFn = fitFn,
+                                    defaultVal = defaultVal,
+                                    binary = binary,
+                                    adds = kwargs)
+        works = numpy.isfinite(finiteVal)
+        if works == False:
+          if verbose:
+            print("Inherited parameters do not work and are being skipped.")
+          
+          k += 1
+          totalTries += 1
+          continue
+    else:
+      #get random initial conditions and test if they work
+      works = False
+      tries = 0
+      fitVals = numpy.array(list(fitDict.values()))
+      while works == False:
+        
+        if callable(randomBorders):
+          import inspect
+          if inspect.isfunction(randomBorders) == False:
+            raise TypeError("Please supply a random function for randomBorders, that can be inspected by 'inspect.getfullargspec'. This might require writing a wrapper function.")
+          neededVars = set(inspect.getfullargspec(randomBorders)[0])
+          randomVars = dict()
+          for i in (set(kwargs.keys()) & neededVars):
+            randomVars[i] = kwargs[i]
+          ranPar = randomBorders(**randomVars)[fitIndex]
+
+        elif isinstance(randomBorders, (int, float)):
+          randomMin = fitVals - randomBorders*abs(fitVals)
+          randomMax = fitVals + randomBorders*abs(fitVals)
+          
+          ranPar = numpy.random.uniform(randomMin, randomMax)
+        elif isinstance(randomBorders, list):
+          if isinstance(randomBorders[0], list):
+            if len(randomBorders) == 1:
+              randomMin = [randomBorders[0][0] for i in fitIndex]  
+              randomMax = [randomBorders[0][1] for i in fitIndex]  
+            else:
+              randomMin = [randomBorders[i][0] for i in fitIndex]
+              randomMax = [randomBorders[i][1] for i in fitIndex]
+          else:
+            randomMin = [fitVals[i] - randomBorders[i]*abs(fitVals[i]) for i in fitIndex]
+            randomMax = [fitVals[i] + randomBorders[i]*abs(fitVals[i]) for i in fitIndex]
+            
+          ranPar = numpy.random.uniform(randomMin, randomMax)
+        else:
+          raise TypeError("random.borders must be a number, a list or a function!")
+          
+        if useOptim == True:
+          finiteVal = combine_and_fit(par = ranPar,
+                                    fitNames = list(fitDict.keys()),
+                                    parNames = getAllNames,
+                                    fitFn = fitFn,
+                                    defaultVal = defaultVal,
+                                    binary = binary,
+                                    adds = kwargs)
+        works = numpy.isfinite(finiteVal)
+      else:
+        works = True
+      
+      tries += 1
+      if tries > 100:
+        raise RuntimeError("Tried 100 times to sample valid starting conditions for the optimiser, but failed. Please check if 'randomBorders' is correctly specified.")
+#         }else if(is.function(random.borders)){
+#           ran.par <- R.utils::doCall(random.borders, 
+#                                      args = c(list(n = length(parms)), 
+#                                               list(...)))
+#           ran.par <- ran.par[-no.fit]
+
+    #specify optimisation parameters (only for the first run)
+    optRun = 1
+    optPrevious = 10**300
+    runs = 1
+    
+    while True:
+      #get initial parameter sets for the optimisation routine
+      if runs == 1:
+        optPar = list(ranPar).copy()
+      else:
+        optPrevious = optRun.copy()
+
+      if useOptim == True:
+        opt = minimize(combine_and_fit, 
+                       x0 = optPar,
+
+                       method='nelder-mead',
+                       options={'xtol': 1e-8, 'disp': False, 'maxiter': 4000},
+                       args = (list(fitDict.keys()),#fitNames
+                               getAllNames,#parNames
+                               fitFn,
+                               binary,
+                               defaultVal,
+                               kwargs))
+        optPar = opt.x
+        optRun = opt.fun
+      else:
+        opt = combine_and_fit(par = optPar,
+                              fitNames = list(fitDict.keys()),
+                              parNames = getAllNames,
+                              fitFn = fitFn,
+                              defaultVal = defaultVal,
+                              binary = binary,
+                              adds = kwargs)
+        if type(opt) is not dict:
+          raise TypeError('The output of the optimisation function has to be a dictionary containing the entries  "SCV" and "parameters".')
+        
+        optRun = opt["SCV"]
+        optPar = opt["parameters"]
+        break
+      
+      if numpy.isfinite(optRun) == False:
+        abort = True
+        if verbose:
+          print("Optimisation failed, run skipped.")
+        
+        totalTries += 1
+        break
+      
+      if abs((optRun - optPrevious)/optPrevious) < conTol:
+        break
+      #update run
+      runs += 1
+      if verbose:
+        print(optRun)
+      
+    #test if current run was better
+    if k == 1 or optRun < optMin:
+      optMin = optRun
+      
+      #get corresponding parameter values
+      outPar = combine_par(fitPar = dict(zip(list(fitDict.keys()),optPar)),
+                           allNames = getAllNames,
+                           defaultVal = defaultVal)
+      
+      result = dict(SCV = optMin, parameters = outPar)
+      #saves progress if the recent fit is the first or better than any previously saved one
+      #check if this model has already been tested
+      fileName = Path(homedir) / "FAMoS-Results" / "Fits" / ("Model" + "".join(map(str, binary))+ ".txt")
+      if os.path.exists(fileName) is True:
+        with open(fileName, "r") as f:
+          resultOld = literal_eval(f.read())
+        
+        if resultOld["SCV"] > optMin:
+          if verbose:
+            print("Current fit better than previous fit. Results are overwritten.")
+          
+          with open(fileName, "w+") as f:
+            f.write(str(result))
+      else:
+        with open(fileName, "w+") as f:
+          f.write(str(result))
+        
+        if verbose:
+          print("No result file present. Fitting results saved in newly created file")
+          
+
+    if abort == False or k ==1:
+      k += 1
+      totalTries = totalTries + 1
+    
+  if verbose:
+    print("Fitting done.")
+  return(result)
+ 
+
+
+
+
+
+#####################################################################################################
 def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forward", initModelType = "random", refit = False, useOptim = True, optimRuns = 1, defaultVal = None, swapParameters = None, criticalParameters = None, randomBorders = 1, controlOptim = dict(maxiter = 1000), conTol = 0.1, savePerformance = True, parallelise = False, logInterval = 600, verbose = False, **kwargs):
   
   """ Performs automated model selection.
