@@ -9,4 +9,4 @@
 # from .get_model         import get_model
 # from .base_optim        import base_optim
 # =============================================================================
-from .famos             import famos
+from .famos import *

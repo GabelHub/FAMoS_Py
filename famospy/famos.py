@@ -338,6 +338,194 @@ def get_results(homedir, mrun):
                 initialModel = initModel[2:])
   return(output)
 
+#####################################################################################################
+def get_most_distant(homedir = os.getcwd(), mrun = None, maxNumber = 100):
+  """ Attempts to find a model most dissimilar from all previously tested models.
+
+        Parameters:
+            homedir (str):A string describing the directory which holds the "FAMoS-Results" folder.
+            mrun (str):A string giving the number of the corresponding FAMoS run, e.g "004". If None (default), all FAMoS runs in the "FAMoS-Results/TestedModels/" folder will be used for evaluation.
+            maxNumber (int):The maximum number of times that the function tries to find the most distant model. Default to 100.
+
+        Returns:
+            (dict): A list containing in its first entry the maximal distance found, the second entry the parameter names and in its third entry the corresponding binary vector. Note that the model may not fulfill previously specified critical conditions.
+      """
+  from pathlib import Path
+  from ast import literal_eval
+  from numpy import isfinite
+  if mrun is None:
+    oldFiles = []
+    for r, d, f in os.walk(Path(homedir) / "FAMoS-Results" / "TestedModels"):
+      for file in f:
+        oldFiles.append(file)
+    if len(oldFiles) == 0:
+      raise ValueError("No files in the specified directory.")
+    storeRes = []
+    for i in range(len(oldFiles)):
+      with open(Path(homedir) / "FAMoS-Results" / "TestedModels"/ oldFiles[i], "r") as f:
+        mtFile = literal_eval(f.read())
+        for j in range(len(mtFile)):
+          if False in isfinite(mtFile[j]):
+            raise ValueError("The file " + oldFiles[i] + " is corrupt.")
+        storeRes = storeRes + mtFile
+    mt = storeRes.copy()
+  else:
+    file = Path(homedir) / "FAMoS-Results" / "TestedModels"/ ("TestedModels" + mrun + ".txt")
+    if file.exists() == False:
+      raise ValueError("The specified file does not exist!")
+    with open(file, "r") as f:
+      mt = literal_eval(f.read())
+    if len(mt) == 0:
+      raise ValueError("The specified file is empty")
+    for i in range(len(mt)):
+      if False in isfinite(mt[i]):
+        raise ValueError("The specified file is corrupt.")
+
+  #cut off header with SCV and iteration number
+  mt = [x[2:] for x in mt]
+  for k in range(min(maxNumber, len(mt))):
+    complement = [abs(x - 1) for x in mt[k]]
+    if sum(complement) == 0:
+      continue
+    absDiff = []
+    for i in range(len(mt)):
+      absDiff += [sum([abs(mt[i][x] - complement[x]) for x in range(len(complement))])]
+    distanceComp = min(absDiff)
+
+    while True:
+      for i in range(len(complement)):
+        compNew = complement.copy()
+        compNew[i] = abs(complement[i] - 1)
+        absDiff = []
+        for i in range(len(mt)):
+          absDiff += [sum([abs(mt[i][x] - compNew[x]) for x in range(len(complement))])]
+        distance = min(absDiff)
+        if distance > distanceComp:
+          distanceComp = distance
+          complement = compNew.copy()
+          break
+      break
+    bestDistance = 0
+    if k == 1 or distance > bestDistance:
+      bestDistance = distance
+      bestComp = complement
+  out = dict(distance = bestDistance, modelBinary = bestComp)
+  return out
+
+#####################################################################################################
+def sc_order(data = os.getcwd(), parNames = None, mrun = None, number = None, colourPar = None, saveOutput = None, **kwargs):
+  """ Plots the selection criterion values of the tested models in ascending order
+
+    Parameters:
+        data (str or list):Either a string containing the directory which holds the "FAMoS-Results" folder or a list containing the tested models along with the respective selection criteria (Note: To correctly display the parameter names in this case, 'parNames' needs to be supplied as well). Default to os.getcwd().
+        parNames (list):A list containing the names of the parameters.
+        mrun (str):A string giving the number of the corresponding famos run, e.g "004". If None (default), all famos runs in the folder will be used for evaluation.
+        number (int):Specifies the number of models that will be plotted. If None (default), all tested models will be used for plotting.
+        colourPar (str):The name of a model parameter. All models containing this parameter will be coloured red. Default to None.
+        saveOutput (str):A string containing the location and name under which the figure should be saved. Default to None.
+
+    Returns:
+        Barplot showing the ordered selection criteria of the tested models. Also returns a data frame containing each unique tested model with its best selection criteria. 
+
+    """
+  from pathlib import Path
+  from ast import literal_eval
+  import numpy as np
+  import matplotlib.pyplot as plt
+  import warnings
+  corrupt = False
+  if isinstance(data, str):
+    #read in files
+    if mrun == None:
+      oldFiles = []
+      for r,d,f in os.walk(Path(data) / "FAMoS-Results" / "TestedModels"):
+        for file in f:
+          oldFiles.append(file)
+      if len(oldFiles) == 0:
+        raise ValueError("No files in the current directory.")
+      storeResSC = []
+      storeResModel = []
+      for i in range(len(oldFiles)):
+        oldFileCorrupt = False
+        with open(Path(data) / "FAMoS-Results" / "TestedModels"/ oldFiles[i], "r") as f:
+          fileData = literal_eval(f.read())
+        for j in reversed(range(len(fileData))):
+          if False in np.isfinite(fileData[j]):
+            corrupt = True
+            if oldFileCorrupt == False:
+              warnings.warn("The file '" + oldFiles[i] + "' is corrupt. Some results are going to be ignored.")
+            oldFileCorrupt = True
+          if fileData[j][2:] in storeResModel:
+            if fileData[j][0] < storeResSC[storeResModel.index(fileData[j][2:])]:
+              storeResSC[storeResModel.index(fileData[j][2:])] = fileData[j][0]
+          else:
+            storeResSC.append(fileData[j][0])
+            storeResModel += [fileData[j][2:]]
+      mt = [[storeResSC[i]] + storeResModel[i] for i in range(len(storeResSC))]
+    else:
+      file = Path(data) / "FAMoS-Results" / "TestedModels"/ ("TestedModels" + mrun + ".txt")
+      if file.exists() == False:
+        raise ValueError("The specified file does not exist")
+      with open(file, "r") as f:
+        mt = literal_eval(f.read())
+      if False in np.isfinite(mt):
+        corrupt = True
+        warnings.warn("The file " + "'TestedModels" + mrun + ".txt'" + " is corrupt. Some results are going to be ignored.")
+  elif isinstance(data, list):
+    mt = data.copy()
+    if False in np.isfinite(mt):
+      corrupt = True
+      warnings.warn("The input list is corrupt. Some results are going to be ignored.")
+  else:
+    raise TypeError("Data needs to be a string or a list")
+  
+  if corrupt:
+    for i in reversed(range(len(mt))):
+      if False in np.isfinite(mt[j]):
+        mt.pop(j)
+  
+  mt.sort()
+  scv = [x[0] for x in mt]
+  if number is not None and number > len(mt):
+    mt = mt[:(number + 1)]
+    scv = scv[:(number + 1)]
+  
+  #get parameter names
+  if parNames is None:
+    if isinstance(data,str):
+      with open(Path(data) / "FAMoS-Results" / "Fits" / ("Model" + "".join(map(str, mt[0][1:])) + ".txt")) as f:
+        parNames = list(literal_eval(f.read())["parameters"].keys())
+    else:
+      parNames = ["par" + str(i) for i in range(len(mt[0]) - 1)]
+    
+  rowColors = ["black" for i in range(len(mt))]
+  #add color if parameter is specified
+  if colourPar is not None:
+    if colourPar not in parNames:
+      raise ValueError("The specified parameter is no model parameter")
+    rowIndex = parNames.index(colourPar) + 1
+    rowParms = [i for i in range(len(mt)) if mt[i][rowIndex] == 1]
+    rowColors = ["red" if i in rowParms else "black" for i in range(len(mt))]
+  
+  #plot figure
+  f = plt.figure()
+  plt.bar(np.arange(len(mt)) + 1, scv, color=rowColors)
+  plt.title("Model comparison")
+  plt.xlabel("model number")
+  plt.ylabel("Selection criterion value")
+  if max(scv) - min(scv) > 10**2:
+    plt.yscale("log")
+  if colourPar is not None:
+    from matplotlib.lines import Line2D
+    custom_lines = [Line2D([0], [0], color="black", lw=4),
+                Line2D([0], [0], color="red", lw=4)]
+    plt.legend(custom_lines, (colourPar + " not included", colourPar + " included"))
+  plt.show()
+  
+  if isinstance(saveOutput, str):
+    f.savefig(saveOutput, bbox_inches='tight')
+  
+  return(mt)
 
 
 #####################################################################################################
@@ -465,11 +653,6 @@ def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, de
       tries += 1
       if tries > 100:
         raise RuntimeError("Tried 100 times to sample valid starting conditions for the optimiser, but failed. Please check if 'randomBorders' is correctly specified.")
-#         }else if(is.function(random.borders)){
-#           ran.par <- R.utils::doCall(random.borders, 
-#                                      args = c(list(n = length(parms)), 
-#                                               list(...)))
-#           ran.par <- ran.par[-no.fit]
 
     #specify optimisation parameters (only for the first run)
     optRun = 1
@@ -625,7 +808,7 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
   from itertools import chain
   from ast import literal_eval
   from operator import itemgetter
-  from famospy import base_optim, model_appr, famos_directories, random_init_model, get_results, set_crit_parms  
+  #from famospy import base_optim, model_appr, famos_directories, random_init_model, get_results, set_crit_parms
   #test the appropriateness of parameters
   if isinstance(initPar, dict) is not True:
     raise TypeError("Initial parameters must be given as named vector.")
@@ -750,18 +933,9 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
                                   critParms = critParms,
                                   doNotFit = set(doNotFit))
     elif initModelType == "mostDistant":
-      print("Not working")
-      #             "most.distant" = {
-#               #check if previous files exist
-#               filenames <- list.files(paste0(homedir,"/FAMoS-Results/TestedModels/"),
-#                                       pattern="*.rds",
-#                                       full.names=TRUE)
-#               if(length(filenames) == 0){
-#                 stop("No previously tested models available. Please use another option for init.model.type.")
-#               }
-#               #get a random initial model
-#               init.model <- which(get.most.distant(input = homedir)[[3]] == 1)
-#             }
+      if len(oldFiles) == 0:
+        raise ValueError("No previously tested models available. Please use another option for initModelType.")
+      initModel = get_most_distant(homedir = homedir)["modelBinary"]
     else:
       raise ValueError("Please use either 'global', 'random' or 'mostDistant' as initModelType. Alternatively, specify a list of parameter names.")
     
@@ -795,9 +969,9 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
       
       pickModel = initModel.copy()
       #save model for next step
-      pickModelPrev = pickModel.copy()
+      pickModelPrev = [i for i in range(len(pickModel)) if pickModel[i] == 1]
       #mark the fitted parameters
-      currModel = [1 if i in initModel else 0 for i in range(len(allNames))]
+      currModel = initModel.copy()
       #currModelNames = [allNames[i] for i in range(len(allNames)) if i in initModel]
       currModelAll = [currModel]
       #set history
@@ -1276,7 +1450,7 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
 # 
 #         }
 #         )
-#         cat(paste0("Switch to method '", method, "'"), sep = "\n")
+      print("Switch to method '" + method + "'")
 #       }
 #     }
 
@@ -1284,48 +1458,3 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
     modelRun += 1
     print("Time passed since start: " + str(datetime.datetime.now() - start))
   
-  
-# =============================================================================
-# import math
-# import numpy as np
-# import tempfile
-# 
-# truep2 = 3
-# truep5 = 2
-# 
-# simDataX = np.array([i for i in range(0,10)])
-# simDataY = np.array([truep2**2 * x**2 - math.exp(truep5 * x) for x in simDataX])
-# 
-# inits = dict(p1 = 3, p2 = 4, p3 = -2, p4 = 2, p5 = 0)
-# defaults = dict(p1 = 0, p2 = -1, p3 = 0, p4 = -1, p5 = -1)
-# 
-# def cost_function(parms, binary,simX, simY):
-#   res = np.array([4*parms["p1"] + parms["p2"]**2 * x**2 + parms["p3"]*math.sin(x) + parms["p4"]*x - math.exp(parms["p5"] * x) for x in simX])
-#   diff = np.sum((res - simY)**2)
-#   nrPar = len([1 for i in binary if i == 1])
-#   nrData = len(simDataX)
-#   aicc = diff + 2*nrPar + 2*nrPar*(nrPar + 1)/(nrData - nrPar - 1)
-#   return(aicc)
-# 
-# def uni(low, high, size = 1):
-#   from numpy.random import uniform
-#   return(uniform(low = low, high = high, size = size))
-#   
-# swaps = [["p1","p5"]]
-# 
-# tmp = tempfile.TemporaryDirectory()
-# direc = "C:/Users/Meins/Desktop"
-# 
-# out = famos(initPar = inits,
-#             fitFn = cost_function,
-#             homedir = direc,#tmp.name,
-#             method = "swap",
-#             doNotFit = ["p4"],
-#             swapParameters = swaps,
-#             initModelType = ["p1", "p3"],
-#             verbose = True,
-#             simX = simDataX,
-#             simY = simDataY)
-# print(out)
-# #tmp.cleanup()
-# =============================================================================
