@@ -528,6 +528,239 @@ def sc_order(data = os.getcwd(), parNames = None, mrun = None, number = None, co
   return(mt)
 
 
+#############################################################################################
+def famos_performance(data, parNames = None, dirpath = os.getcwd(), saveOutput = None):
+  
+  """ Plot the performance of a famos run.
+
+    Parameters:
+        data (str or list):Either a string containing the directory which holds the "FAMoS-Results" folder or a list containing the tested models along with the respective selection criteria (Note: To correctly display the parameter names in this case, 'parNames' needs to be supplied as well). Default to os.getcwd().
+        parNames (list):A list containing the names of the parameters.
+        dirpath (str):If 'data' is the number of the famos run and the results are not found in the current working directory, the directory location needs to be specified as well.
+        
+        saveOutput (str):An optional string containing the location and name under which the figure should be saved.
+
+    Returns:
+        (fig): A figure, in which the upper plot shows the improvement of the selection criterion over each FAMoS iteration. The best value is shown on the right axis. The lower plot depicts the corresponding best model of each iteration. Here, green colour shows added, red colour removed and blue colour swapped parameters. The parameters of the final model are printed bold.
+
+    """
+    
+  from pathlib import Path
+  from ast import literal_eval
+  import numpy as np
+  import matplotlib.pyplot as plt
+  from matplotlib import colors
+  import warnings
+  corrupt = False
+  if isinstance(data, str):
+    #read in files
+      file = Path(dirpath) / "FAMoS-Results" / "TestedModels"/ ("TestedModels" + data + ".txt")
+      if file.exists() == False:
+        raise ValueError("The file '" + file +"' does not exist. If the directory is wrong, please supply the correct one with 'dirpath'.")
+      with open(file, "r") as f:
+        mt = literal_eval(f.read())
+      if False in np.isfinite(mt):
+        corrupt = True
+        warnings.warn("The file " + "'TestedModels" + data + ".txt'" + " is corrupt. Some results are going to be ignored.")
+  elif isinstance(data, list):
+    mt = data.copy()
+    if False in np.isfinite(mt):
+      corrupt = True
+      warnings.warn("The input list is corrupt. Some results are going to be ignored.")
+  else:
+    raise TypeError("Data needs to be a string or a list")
+  
+  if corrupt:
+    for i in reversed(range(len(mt))):
+      if False in np.isfinite(mt[i]):
+        mt.pop(i)
+        
+  if parNames is None:
+    if isinstance(data,str):
+      with open(Path(dirpath) / "FAMoS-Results" / "Fits" / ("Model" + "".join(map(str, mt[0][2:])) + ".txt")) as f:
+        parNames = list(literal_eval(f.read())["parameters"].keys())
+    else:
+      parNames = ["par" + str(i) for i in range(len(mt[0]) - 1)]
+  
+  #get the best model per run
+  getBest = []
+  run = -1
+  for i in range(len(mt)):
+    if mt[i][1] == run:
+      if mt[i][0] < getBest[-1][0]:
+        getBest[-1] = mt[i].copy()
+    else:
+      run = mt[i][1]
+      getBest += [mt[i]]
+  
+  for i in range(len(getBest) -1):
+    if getBest[i + 1][0] > getBest[i][0]:
+      getBest[i + 1] = getBest[i].copy()
+      getBest[i + 1][1] += 1
+
+  scv = [x[0] for x in getBest]
+  #generate color scheme for grid plot
+  colScheme = np.array([x[2:] for x in getBest])
+  for i in reversed(range(1,len(getBest))):
+    if sum(colScheme[i]) > sum(colScheme[i-1]):
+      colScheme[i] = [colScheme[i][j] if colScheme[i][j] == colScheme[i-1][j] else 2 for j in range(len(colScheme[i]))]
+    elif sum(colScheme[i]) < sum(colScheme[i-1]):
+      colScheme[i] = [colScheme[i][j] if colScheme[i][j] == colScheme[i-1][j] else 3 for j in range(len(colScheme[i]))]
+    elif sum(abs(colScheme[i] - colScheme[i-1])) == 2:
+      colScheme[i] = [colScheme[i][j] if colScheme[i][j] == colScheme[i-1][j] else 4 for j in range(len(colScheme[i]))]
+      
+  # make a color map of fixed colors
+  cmap = colors.ListedColormap(['white', 'grey', 'green', 'red', 'blue'])
+  bounds=[-0.5,0.5,1.5,2.5,3.5,4.5]
+  norm = colors.BoundaryNorm(bounds, cmap.N)
+
+  
+  gridsize = (3, 1)
+  f = plt.figure(figsize=(12, 8))
+  ax1 = plt.subplot2grid(gridsize, (0, 0))
+  plt.plot(np.arange(1, len(getBest) + 1, 1), scv, marker = "o")
+  plt.xticks(np.arange(1, len(getBest) + 1, 1))
+  plt.title("Performance of famos")
+  plt.ylabel("SC value")
+  if max(scv) - min(scv) > 10**2:
+    plt.yscale("log")
+  ax2 = ax1.twinx()
+  ax2.yaxis.tick_right()
+  plt.plot(np.arange(1, len(getBest) + 1, 1), scv, marker = "", linestyle = "")
+  plt.yticks([round(min(scv),2)])
+
+  
+  plt.subplot2grid(gridsize, (1, 0),colspan=1, rowspan=2)
+  plt.pcolor(list(reversed(np.transpose(colScheme))), cmap = cmap, edgecolors='k', linewidths=1, norm = norm)
+  plt.xticks(ticks = np.arange(0.5, len(getBest) + 0.5, 1), labels = np.arange(len(getBest)) + 1) 
+  plt.yticks(ticks = np.arange(0.5, len(parNames) + 0.5, 1), labels = reversed(parNames))
+  plt.xlabel("iteration")
+  plt.ylabel("parameter")
+  plt.pause(0.05)
+  plt.show()
+  if isinstance(saveOutput, str):
+    f.savefig(saveOutput, bbox_inches='tight')
+  
+  return(getBest)
+
+
+
+#############################################################################################
+def aicc_weights(data = os.getcwd(), parNames = None, mrun = None, reorder = True, saveOutput = None):
+  
+  """ Plots the evidence ratios (only valid for AICc)
+
+    Parameters:
+        data (str or list):Either a string containing the directory which holds the "FAMoS-Results" folder or a list containing the tested models along with the respective selection criteria (Note: To correctly display the parameter names in this case, 'parNames' needs to be supplied as well). Default to os.getcwd().
+        parNames (list):A list containing the names of the parameters.
+        mrun (str):A string giving the number of the corresponding famos run, e.g "004". If None (default), all famos runs in the folder will be used for evaluation.
+        reorder (bool):If True (default), results will be ordered by evidence ratios (descending). If False, the order of parameters will be the same as the order specified in 'initPar' in famos or the order given in 'parNames'.
+        saveOutput (str):A string containing the location and name under which the figure should be saved. Default to None.
+
+    Returns:
+        Barplot showing the ordered selection criteria of the tested models. Also returns a data frame containing each unique tested model with its best selection criteria. 
+
+    """
+  from pathlib import Path
+  from ast import literal_eval
+  import numpy as np
+  import matplotlib.pyplot as plt
+  import warnings
+  corrupt = False
+  if isinstance(data, str):
+    #read in files
+    if mrun == None:
+      oldFiles = []
+      for r,d,f in os.walk(Path(data) / "FAMoS-Results" / "TestedModels"):
+        for file in f:
+          oldFiles.append(file)
+      if len(oldFiles) == 0:
+        raise ValueError("No files in the current directory.")
+      storeResSC = []
+      storeResModel = []
+      for i in range(len(oldFiles)):
+        oldFileCorrupt = False
+        with open(Path(data) / "FAMoS-Results" / "TestedModels"/ oldFiles[i], "r") as f:
+          fileData = literal_eval(f.read())
+        for j in reversed(range(len(fileData))):
+          if False in np.isfinite(fileData[j]):
+            corrupt = True
+            if oldFileCorrupt == False:
+              warnings.warn("The file '" + oldFiles[i] + "' is corrupt. Some results are going to be ignored.")
+            oldFileCorrupt = True
+          if fileData[j][2:] in storeResModel:
+            if fileData[j][0] < storeResSC[storeResModel.index(fileData[j][2:])]:
+              storeResSC[storeResModel.index(fileData[j][2:])] = fileData[j][0]
+          else:
+            storeResSC.append(fileData[j][0])
+            storeResModel += [fileData[j][2:]]
+      mt = [[storeResSC[i]] + storeResModel[i] for i in range(len(storeResSC))]
+    else:
+      file = Path(data) / "FAMoS-Results" / "TestedModels"/ ("TestedModels" + mrun + ".txt")
+      if file.exists() == False:
+        raise ValueError("The specified file does not exist")
+      with open(file, "r") as f:
+        mt = literal_eval(f.read())
+      if False in np.isfinite(mt):
+        corrupt = True
+        warnings.warn("The file " + "'TestedModels" + mrun + ".txt'" + " is corrupt. Some results are going to be ignored.")
+  elif isinstance(data, list):
+    mt = data.copy()
+    if False in np.isfinite(mt):
+      corrupt = True
+      warnings.warn("The input list is corrupt. Some results are going to be ignored.")
+  else:
+    raise TypeError("Data needs to be a string or a list")
+  
+  if corrupt:
+    for i in reversed(range(len(mt))):
+      if False in np.isfinite(mt[i]):
+        mt.pop(i)
+  
+  mt.sort()
+  scv = [x[0] for x in mt]
+
+  #get parameter names
+  if parNames is None:
+    if isinstance(data,str):
+      with open(Path(data) / "FAMoS-Results" / "Fits" / ("Model" + "".join(map(str, mt[0][1:])) + ".txt")) as f:
+        parNames = list(literal_eval(f.read())["parameters"].keys())
+    else:
+      parNames = ["par" + str(i) for i in range(len(mt[0]) - 1)]
+  
+  scv = np.array(scv)
+  mt = np.array(mt)
+  akaikeWeights = np.exp(-0.5*(scv - min(scv)))/sum(np.exp(-0.5*(scv - min(scv))))
+  parmsSupport = akaikeWeights.dot(mt[:,2:])
+  sortPar = parmsSupport.argsort()
+  #adjust color scheme
+  aiccCol = ["blue" if i == 0 else "red" for i in mt[0,2:]]
+  
+  if reorder == True:
+    parNames = [parNames[i] for i in sortPar]
+    aiccCol = [aiccCol[i] for i in sortPar]
+    parmsSupport.sort()
+  else:
+    parNames = list(reversed(parNames))
+    aiccCol = list(reversed(aiccCol))
+    parmsSupport = list(reversed(parmsSupport))
+  
+
+  f = plt.figure()
+  plt.barh(y = np.arange(len(parmsSupport)) + 1, width = parmsSupport, color=aiccCol)
+  plt.yticks(ticks = np.arange(len(parmsSupport)) + 1, labels = parNames)
+  plt.title("Evidence ratio (only valid for AICc)")
+  plt.xlabel("relative support")
+  plt.ylabel("parameters")
+  
+  if isinstance(saveOutput, str):
+    f.savefig(saveOutput, bbox_inches='tight')
+  
+  return(parmsSupport)
+
+
+
+
 #####################################################################################################
 def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, defaultVal = None, randomBorders = 1, conTol = 0.01, controlOptim = dict(maxiter = 1000), verbose = False, **kwargs):
   
@@ -834,10 +1067,6 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
   if isinstance(randomBorders, (int,float,list)) == False and callable(randomBorders) == False:
     raise TypeError("randomBorders must be either a number, a list or a function.")
  
-#   #reset graphical parameters on exit
-#   old.par <- graphics::par("mfrow")
-#   on.exit(graphics::par(mfrow = old.par))
-
   print("Initializing...")
   #set starting time
   start = datetime.datetime.now()
@@ -891,6 +1120,15 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
   # get all parameter names
   allNames = list(initPar.keys())
   
+  #set storage
+  if savePerformance == True:
+    storagePerformance = str(Path(homedir) / "FAMoS-Results" / "Figures" / ("Performance" + mrun + ".pdf"))
+    storageSC = str(Path(homedir) / "FAMoS-Results" / "Figures" / ("ModelComparison" + mrun + ".pdf"))
+    storageAICC = str(Path(homedir) / "FAMoS-Results" / "Figures" / ("AICcWeights" + mrun + ".pdf"))
+  else:
+    storagePerformance = False
+    storageSC = False
+    storageAICC = False
   #prepare critical and swap parameters for algorithm
   if criticalParameters is None:
     noCrit = True
@@ -931,7 +1169,7 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
       #set a random starting model
       initModel = random_init_model(numberPar = len(allNames),
                                   critParms = critParms,
-                                  doNotFit = set(doNotFit))
+                                  doNotFit = doNotFit)
     elif initModelType == "mostDistant":
       if len(oldFiles) == 0:
         raise ValueError("No previously tested models available. Please use another option for initModelType.")
@@ -967,11 +1205,11 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
     if modelRun == 1:
       print("\nfamos iteration # " + str(modelRun) + " - fitting starting model.")
       
-      pickModel = initModel.copy()
+      pickModel = [1 if i in initModel else 0 for i in range(len(allNames))]
       #save model for next step
       pickModelPrev = [i for i in range(len(pickModel)) if pickModel[i] == 1]
       #mark the fitted parameters
-      currModel = initModel.copy()
+      currModel = pickModel.copy()
       #currModelNames = [allNames[i] for i in range(len(allNames)) if i in initModel]
       currModelAll = [currModel]
       #set history
@@ -1137,6 +1375,7 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
 #       next
 #     }
 # 
+    
     #update the catalogue of tested models
     modelsTested = modelsTested + currModelAll
     modelsPerRun = modelsPerRun + [[modelRun] + i for i in currModelAll]
@@ -1151,7 +1390,7 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
         if verbose:
           print("Job ID for model " + str(j + 1) + ": " + "".join(map(str,currModelAll[j])))
         if parallelise == True:
-          print("not working")
+          raise TypeError("Parallelisation currently not implemented")
         else:
           base_optim(binary = currModelAll[j],
                     parms = bestPar,
@@ -1303,23 +1542,12 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
       with open(Path(homedir) / "FAMoS-Results" / "BestModel"/ ("BestModel" + mrun + ".txt"), "w+") as f:
         f.write(str(dict(SCV = currSCV, bestPar = bestPar, binary = bmBinary)))
     else:
-# 
-#       #save FAMoS performance
-#       if(ncol(saveTestedModels) > 3){
-# 
-#         if(save.performance == T){
-#           famos.performance(input = saveTestedModels,
-#                             path = homedir,
-#                             save.output = paste0(homedir,
-#                                                  "/FAMoS-Results/Figures/Performance",
-#                                                  mrun,
-#                                                  ".pdf"))
-#         }
-# 
-#         famos.performance(input = saveTestedModels,
-#                           path = homedir)
-# 
-#       }
+      if len(saveTestedModels) > 3:
+        famos_performance(data = saveTestedModels,
+                          parNames = list(initPar.keys()),
+                          dirpath = homedir,
+                          saveOutput = storagePerformance)
+
       if currSCV < oldSCV:
         oldSCV = currSCV
         pickModelPrev = [i for i in range(len(currModel)) if currModelAll[indexSCV][i] == 1]
@@ -1353,25 +1581,16 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
               print("Time needed: " + str(datetime.datetime.now() - start))
               finalResults = get_results(homedir, mrun)
               
-              #               graphics::par(mfrow = c(1,2))
-#               sc.order(input = saveTestedModels,
-#                        mrun = mrun)
-# 
-#               aicc.weights(input = saveTestedModels,
-#                            mrun = mrun,
-#                            reorder = TRUE)
-# 
-#               if(save.performance == T){
-#                 sc.order(input = saveTestedModels,
-#                          mrun = mrun,
-#                          save.output = paste0(homedir,"/FAMoS-Results/Figures/ModelComparison",mrun,".pdf"))
-# 
-#                 aicc.weights(input = saveTestedModels,
-#                              mrun = mrun,
-#                              reorder = TRUE,
-#                              save.output = paste0(homedir,"/FAMoS-Results/Figures/AkaikeWeights",mrun,".pdf"))
-#               }
-# 
+              sc_order(data = saveTestedModels,
+                       parNames = list(initPar.keys()),
+                       mrun = mrun,
+                       saveOutput = storageSC)
+              
+              aicc_weights(data = saveTestedModels,
+                           parNames = list(initPar.keys()),
+                           mrun = mrun,
+                           saveOutput = storageAICC)
+                          
               return(finalResults)
           elif previous == "swap":
             method = "backward"
@@ -1385,25 +1604,17 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
               print("No better model was found. Algorithm terminated.")
               print("Time needed: " + str(datetime.datetime.now() - start))
               finalResults = get_results(homedir, mrun)
-#               graphics::par(mfrow = c(1,2))
-#               sc.order(input = saveTestedModels,
-#                        mrun = mrun)
-# 
-#               aicc.weights(input = saveTestedModels,
-#                            mrun = mrun,
-#                            reorder = TRUE)
-# 
-#               if(save.performance == T){
-#                 sc.order(input = saveTestedModels,
-#                          mrun = mrun,
-#                          save.output = paste0(homedir,"/FAMoS-Results/Figures/ModelComparison",mrun,".pdf"))
-# 
-#                 aicc.weights(input = saveTestedModels,
-#                              mrun = mrun,
-#                              reorder = TRUE,
-#                              save.output = paste0(homedir,"/FAMoS-Results/Figures/AkaikeWeights",mrun,".pdf"))
-#               }
-# 
+              
+              sc_order(data = saveTestedModels,
+                       parNames = list(initPar.keys()),
+                       mrun = mrun,
+                       saveOutput = storageSC)
+              
+              aicc_weights(data = saveTestedModels,
+                           parNames = list(initPar.keys()),
+                           mrun = mrun,
+                           saveOutput = storageAICC)
+
               return(finalResults)
 #             }
 # 
@@ -1415,46 +1626,23 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
           print("No better model was found. Algorithm terminated.")
           print("Time needed: " + str(datetime.datetime.now() - start))
           finalResults = get_results(homedir, mrun)
+          
+          sc_order(data = saveTestedModels,
+                   parNames = list(initPar.keys()),
+                   mrun = mrun,
+                   saveOutput = storageSC)
+              
+          aicc_weights(data = saveTestedModels,
+                       parNames = list(initPar.keys()),
+                       mrun = mrun,
+                       saveOutput = storageAICC)
 
-#           # algorithm ends once swap method fails
-#           cat("Best model found. Algorithm stopped.", sep = "\n")
-#           final.results <- return.results(homedir, mrun)
-#           timediff <- difftime(Sys.time(),start, units = "secs")[[1]]
-#           cat(paste0("Time needed: ",
-#                      sprintf("%02d:%02d:%02d",
-#                              timediff %% 86400 %/% 3600,  # hours
-#                              timediff %% 3600 %/% 60,  # minutes
-#                              timediff %% 60 %/% 1), # seconds,
-#                      sep = "\n"))
-# 
-#           graphics::par(mfrow = c(1,2))
-#           sc.order(input = saveTestedModels,
-#                    mrun = mrun)
-# 
-#           aicc.weights(input = saveTestedModels,
-#                        mrun = mrun,
-#                        reorder = TRUE)
-# 
-#           if(save.performance == T){
-#             sc.order(input = saveTestedModels,
-#                      mrun = mrun,
-#                      save.output = paste0(homedir,"/FAMoS-Results/Figures/ModelComparison",mrun,".pdf"))
-# 
-#             aicc.weights(input = saveTestedModels,
-#                          mrun = mrun,
-#                          reorder = TRUE,
-#                          save.output = paste0(homedir,"/FAMoS-Results/Figures/AkaikeWeights",mrun,".pdf"))
-#           }
-# 
           return(finalResults)
-# 
-#         }
-#         )
+
       print("Switch to method '" + method + "'")
-#       }
-#     }
 
     #update model run
     modelRun += 1
     print("Time passed since start: " + str(datetime.datetime.now() - start))
   
+
