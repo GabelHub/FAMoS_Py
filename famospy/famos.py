@@ -1176,7 +1176,18 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
       if len(oldFiles) == 0:
         raise ValueError("No previously tested models available. Please use another option for initModelType.")
       initModel = get_most_distant(homedir = homedir)["modelBinary"]
-      initModel = [i for i in initModel if i not in doNotFit]
+      initModel = [i for i in range(len(initModel)) if initModel[i] == 1]
+      if doNotFit is not None:
+        initModel = [i for i in initModel if i not in doNotFit]
+      if len(initModel) == 0:
+        raise ValueError("No untested model was found. Please change the initModelType option.")
+      ma = model_appr(currentParms = initModel,
+                    criticalParms = critParms,
+                    doNotFit = doNotFit)
+      if ma == False:
+        for i in range(len(critParms)):
+          initModel = set(initModel) | set([critParms[i][0]])
+        initModel = list(initModel)
     else:
       raise ValueError("Please use either 'global', 'random' or 'mostDistant' as initModelType. Alternatively, specify a list of parameter names.")
     
@@ -1325,12 +1336,12 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
           #create all possible combinations between used and unused parameters
           cmb = [[x,y] for x in par1 for y in par0]
 
-          parmsLeft = cmb.copy()
+          parmsLeft += cmb.copy()
  
           #create new model for each of those combinations
           if len(cmb) > 0:
             for j in range(len(cmb)):
-              currModel = [1 if i in pickModel else 0 for i in range(len(allNames))]
+              currModel = [1 if i in pickModelPrev else 0 for i in range(len(allNames))]
               currModel[cmb[j][0]] = 0
               currModel[cmb[j][1]] = 1
               if verbose:
@@ -1354,11 +1365,11 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
             #if model was neither skipped nor tested before, add to the testing catalogue
             currModelAll.append(currModel)
           # if swap method fails to provide new valid models, the algorithm is being terminated
-          if len(currModelAll) == 0:
-            print("swap method does not yield any valid model. famos terminated.")
-            print("Time needed: " + str(datetime.datetime.now() - start))
-            finalResults = get_results(homedir, mrun)
-            return(finalResults)
+        if len(currModelAll) == 0:
+          print("swap method does not yield any valid model. famos terminated.")
+          print("Time needed: " + str(datetime.datetime.now() - start))
+          finalResults = get_results(homedir, mrun)
+          return(finalResults)
 
     if len(currModelAll) == 0:
       print("All neighbouring models have been tested during this run. Algorithm terminated.")
@@ -1403,7 +1414,7 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
         print("Model fit for " +  "".join(map(str,currModelAll[j])) + " exists and refitting is not enabled.")
     
     #check if jobs are still running
-    if parallelise == True:
+    if parallelise == True and "processes" in locals():
       # Run processes
       for p in processes:
         p.start()
