@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(name='famospy',
       version='0.1',
@@ -7,5 +7,5 @@ setup(name='famospy',
       author='Michael Gabel',
       author_email='m_gabel@gmx.de',
       license='MIT',
-      packages=['os', 'random', 'pathlib', 'inspect','ast', 'numpy', 'matplotlib', 'warnings', 'scipy', 'time', 'datetime', 'itertools', 'operator', 'shutil', 'sys', 'multiprocessing'],
+      packages=find_packages(),
       zip_safe=False)
