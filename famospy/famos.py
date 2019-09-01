@@ -762,7 +762,7 @@ def aicc_weights(data = os.getcwd(), parNames = None, mrun = None, reorder = Tru
 
 
 #####################################################################################################
-def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, defaultVal = None, randomBorders = 1, conTol = 0.01, controlOptim = dict(maxiter = 1000), verbose = False, **kwargs):
+def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, defaultVal = None, randomBorders = 1, conTol = 0.01, controlOptim = dict(maxiter = 1000), verbose = False, adds = dict()):
   
   """ Underlying optimisation routine of famospy.
 
@@ -778,6 +778,7 @@ def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, de
         conTol (float):The relative convergence tolerance. If useOptim is True, famos will rerun the optimisation routin until the relative improvement between the current and the last fit is less than conTol. Default is set to 0.01, meaning the fitting will terminate if the improvement is less than 1% of the previous value.
         controlOptim (dict):Control parameters passed along to scipy's minimize function. For more details, see the corresponding documentation.
         verbose (bool):If True, FAMoS will output all details about the current fitting procedure.
+        adds (dict):A dictionary containing additional parameters to be passed on to the optimisation functions.
         
 
     Returns:
@@ -790,6 +791,7 @@ def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, de
   from ast import literal_eval
   import os
   from pathlib import Path
+
   #get the indices of the fitted and the not-fitted parameter
   noFitIndex = [i for i in range(len(binary)) if binary[i] == 0]
   fitIndex = [i for i in range(len(binary)) if binary[i] == 1]
@@ -824,7 +826,7 @@ def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, de
                                     fitFn = fitFn,
                                     defaultVal = defaultVal,
                                     binary = binary,
-                                    adds = kwargs)
+                                    adds = adds)
         works = numpy.isfinite(finiteVal)
         if works == False:
           if verbose:
@@ -846,8 +848,8 @@ def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, de
             raise TypeError("Please supply a random function for randomBorders, that can be inspected by 'inspect.getfullargspec'. This might require writing a wrapper function.")
           neededVars = set(inspect.getfullargspec(randomBorders)[0])
           randomVars = dict()
-          for i in (set(kwargs.keys()) & neededVars):
-            randomVars[i] = kwargs[i]
+          for i in (set(adds.keys()) & neededVars):
+            randomVars[i] = adds[i]
           ranPar = randomBorders(**randomVars)[fitIndex]
 
         elif isinstance(randomBorders, (int, float)):
@@ -878,7 +880,7 @@ def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, de
                                     fitFn = fitFn,
                                     defaultVal = defaultVal,
                                     binary = binary,
-                                    adds = kwargs)
+                                    adds = adds)
         works = numpy.isfinite(finiteVal)
       else:
         works = True
@@ -910,7 +912,7 @@ def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, de
                                fitFn,
                                binary,
                                defaultVal,
-                               kwargs))
+                               adds))
         optPar = opt.x
         optRun = opt.fun
       else:
@@ -920,7 +922,7 @@ def base_optim(binary, parms, fitFn, homedir, useOptim = True, optimRuns = 1, de
                               fitFn = fitFn,
                               defaultVal = defaultVal,
                               binary = binary,
-                              adds = kwargs)
+                              adds = adds)
         if type(opt) is not dict:
           raise TypeError('The output of the optimisation function has to be a dictionary containing the entries  "SCV" and "parameters".')
         
@@ -1362,19 +1364,6 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
       print("Time needed: " + str(datetime.datetime.now() - start))
       finalResults = get_results(homedir, mrun)
       return(finalResults)
-# 
-#     #check if current model does contain parameters. If not, method is changed to forward since a model with 0 parameters would not fit our data well enough.
-#     if(sum(curr.model.all) == 0) {
-#       method <- "forward"
-#       previous <- "backward"
-#       cat("Model does not include any parameter. Continue with forward search.", sep = "\n")
-#       model.run <- model.run + 1
-#       models.tested <- cbind(models.tested, curr.model.all)
-#       models.per.run <- cbind(models.per.run, rbind(model.run, curr.model.all))
-#       save.SCV <- cbind(save.SCV, NA)
-#       next
-#     }
-# 
     
     #update the catalogue of tested models
     modelsTested = modelsTested + currModelAll
@@ -1390,7 +1379,11 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
         if verbose:
           print("Job ID for model " + str(j + 1) + ": " + "".join(map(str,currModelAll[j])))
         if parallelise == True:
-          raise TypeError("Parallelisation currently not implemented")
+          if j == 0:
+            import multiprocessing as mp
+            processes = []
+          processes += [mp.Process(target = base_optim, args = (currModelAll[j], bestPar, fitFn, homedir, useOptim, optimRuns, defaultVal, randomBorders, conTol, controlOptim, verbose, kwargs))]
+          
         else:
           base_optim(binary = currModelAll[j],
                     parms = bestPar,
@@ -1400,104 +1393,39 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
                     optimRuns = optimRuns,
                     defaultVal = defaultVal,
                     randomBorders = randomBorders,
-                    controlOptim = controlOptim,
                     conTol = conTol,
+                    controlOptim = controlOptim,
                     verbose = verbose,
-                    **kwargs)
+                    adds = kwargs)
       else:
         #         assign(paste0("model",j), "no.refit")
         print("Model fit for " +  "".join(map(str,currModelAll[j])) + " exists and refitting is not enabled.")
+    
+    #check if jobs are still running
+    if parallelise == True:
+      # Run processes
+      for p in processes:
+        p.start()
+      #check job status and continue once all jobs are finished
+      status = True
+      submitTime = datetime.datetime.now()
+      ticker = 0
+      while True:
+        if any(p.is_alive() for p in processes):
+          time.sleep(1)
+          if status == True:
+            if verbose:
+              print("Waiting for jobs to finish ...")
+            status = False
+          timePassed = datetime.datetime.now() - submitTime
+          timePassed = timePassed.seconds - ticker*logInterval
+          if timePassed > logInterval:
+            ticker += 1
+            print("Time spent waiting: " + str(datetime.datetime.now() - submitTime))
+            print(str(sum([1 for p in processes if p.is_alive()])) + " out of " + str(len(processes)) + " jobs are still running.")
+        else:
+          break
 
-#     if(future.off == FALSE){
-#       #set looping variable
-#       waiting <- TRUE
-#       waited.models <- rep(1,ncol(curr.model.all))
-#       time.waited <- Sys.time()
-#       time.passed <- -1
-#       ticker <- 0
-#       ticker.time <- log.interval
-# 
-#       #check if the job is still running. If the job is not running anymore restart.
-#       while(waiting == TRUE){
-#         update.log <- FALSE
-#         waiting <- FALSE
-#         #cycle through all models
-#         for(j in which(waited.models == 1)){
-# 
-#           if(future::resolved(get(paste0("model", j))) == FALSE){
-#             waiting <- TRUE
-#           }else{
-# 
-#             if(class(try(future::value(get(paste0("model", j)), std = FALSE))) == "try-error"){
-#               stop(paste0("Future failed. The corresponding error message of job ",
-#                           paste(curr.model.all[,j], collapse=""),
-#                           " is shown above. If no output is shown, use 'future.off = TRUE' to debug."))
-#             }
-# 
-#             #check if output was generated, including waiting period if the cluster is very busy
-#             if(!file.exists(paste0(homedir,
-#                                    "/FAMoS-Results/Fits/Model",
-#                                    paste(curr.model.all[,j], collapse=""),
-#                                    ".rds"))){
-#               Sys.sleep(10)
-#             }
-# 
-#             if(!file.exists(paste0(homedir,
-#                                    "/FAMoS-Results/Fits/Model",
-#                                    paste(curr.model.all[,j], collapse=""),
-#                                    ".rds"))){
-# 
-# 
-#               stop("Future is done but no output file to job ",
-#                    paste(curr.model.all[,j], collapse=""),
-#                    " was created. FAMoS halted.")
-#             }else{
-#               #update waiting variable
-#               waiting <- waiting || FALSE
-#               #update waiting log
-#               waited.models[j] <- 0
-#               update.log <- TRUE
-#             }
-# 
-#           }
-#         }
-#         if(waiting == TRUE){
-#           #print("Waiting ...")
-#           if(time.passed == -1){
-#             cat("Waiting for model fits ...", sep = "\n")
-#           }
-#           Sys.sleep(5)
-#         }
-# 
-#         time.passed <- round(difftime(Sys.time(),time.waited, units = "secs")[[1]],2) - ticker*ticker.time
-# 
-#         #output the log for the models that is waited for (every 5 min)
-#         if( (time.passed > ticker.time) ){
-#           ticker <- ticker + 1
-#           nr.running <-  length(which(waited.models == 1))
-# 
-#           timediff <- difftime(Sys.time(),time.waited, units = "secs")[[1]]
-#           cat(paste0("Time spent waiting so far: ",
-#                      sprintf("%02d:%02d:%02d",
-#                              timediff %% 86400 %/% 3600,  # hours
-#                              timediff %% 3600 %/% 60,  # minutes
-#                              timediff %% 60 %/% 1), # seconds,
-#                      sep = "\n"))
-# 
-#           if(update.log == TRUE){
-#             #calculate difference in time
-#             if(nr.running == ncol(curr.model.all)){
-#               cat("Waiting for fits of all models ...", sep = "\n")
-#             }else{
-#               cat("Waiting for fits of these models:", sep = "\n")
-#               cat(paste0(which(waited.models == 1)))
-#               cat("",sep = "\n")
-#             }
-#           }
-#         }
-# 
-#       }
-#     }
     #read in files
     getSCV = []
     getPars = []
@@ -1507,10 +1435,9 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
       if modelFile.exists() == False:
         #checking if file can be accessed
         print("Trying to read in results file of model " + "".join(map(str,currModelAll[j])))
-        while True:
-          time.sleep(1)
-          if modelFile.exists() == True:
-            break
+        time.sleep(10)
+        if modelFile.exists() == False:
+          raise TypeError("No output file for model "+ "".join(map(str,currModelAll[j])) + " was generated. Make sure that the specified cost/optimisation function works correctly. famos halted.")
  
       #waiting is over, read out file
       with open(modelFile, "r") as f:
@@ -1616,8 +1543,7 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
                            saveOutput = storageAICC)
 
               return(finalResults)
-#             }
-# 
+
           elif previous == "backward":
             method = "forward"
           
@@ -1645,4 +1571,3 @@ def famos(initPar, fitFn, homedir = os.getcwd(), doNotFit = None, method = "forw
     modelRun += 1
     print("Time passed since start: " + str(datetime.datetime.now() - start))
   
-
