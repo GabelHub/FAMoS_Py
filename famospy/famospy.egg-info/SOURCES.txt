@@ -1,0 +1,6 @@
+setup.py
+famospy.egg-info/PKG-INFO
+famospy.egg-info/SOURCES.txt
+famospy.egg-info/dependency_links.txt
+famospy.egg-info/not-zip-safe
+famospy.egg-info/top_level.txt
